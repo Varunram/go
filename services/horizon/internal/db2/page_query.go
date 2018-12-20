@@ -216,6 +216,7 @@ func (p PageQuery) CursorInt64Pair(sep string) (l int64, r int64, err error) {
 // cursor are set to the appropriate defaults and are valid.
 func NewPageQuery(
 	cursor string,
+	validateCursor bool,
 	order string,
 	limit uint64,
 ) (result PageQuery, err error) {
@@ -233,10 +234,12 @@ func NewPageQuery(
 
 	// Set cursor
 	result.Cursor = cursor
-	_, _, err = result.CursorInt64Pair(DefaultPairSep)
-	if err != nil {
-		err = ErrInvalidCursor
-		return
+	if validateCursor {
+		_, _, err = result.CursorInt64Pair(DefaultPairSep)
+		if err != nil {
+			err = ErrInvalidCursor
+			return
+		}
 	}
 
 	// Set limit
@@ -255,8 +258,8 @@ func NewPageQuery(
 }
 
 // MustPageQuery behaves as NewPageQuery, but panics upon error
-func MustPageQuery(cursor string, order string, limit uint64) PageQuery {
-	r, err := NewPageQuery(cursor, order, limit)
+func MustPageQuery(cursor string, validateCursor bool, order string, limit uint64) PageQuery {
+	r, err := NewPageQuery(cursor, validateCursor, order, limit)
 	if err != nil {
 		panic(err)
 	}

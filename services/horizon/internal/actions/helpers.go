@@ -30,6 +30,13 @@ const (
 	ParamLimit = "limit"
 )
 
+type Opt int
+
+const (
+	// DisableCursorValidation disables cursor validation in GetPageQuery
+	DisableCursorValidation Opt = iota
+)
+
 // GetCursor retrieves a string from either the URLParams, form or query string.
 // This method uses the priority (URLParams, Form, Query).
 func (base *Base) GetCursor(name string) string {
@@ -171,7 +178,16 @@ func (base *Base) GetLimit(name string, def uint64, max uint64) uint64 {
 
 // GetPageQuery is a helper that returns a new db.PageQuery struct initialized
 // using the results from a call to GetPagingParams()
-func (base *Base) GetPageQuery() db2.PageQuery {
+func (base *Base) GetPageQuery(opts ...Opt) db2.PageQuery {
+	disableCursorValidation := false
+
+	for opt := range opts {
+		switch Opt(opt) {
+		case DisableCursorValidation:
+			disableCursorValidation = true
+		}
+	}
+
 	if base.Err != nil {
 		return db2.PageQuery{}
 	}
@@ -184,7 +200,7 @@ func (base *Base) GetPageQuery() db2.PageQuery {
 		return db2.PageQuery{}
 	}
 
-	r, err := db2.NewPageQuery(cursor, order, limit)
+	r, err := db2.NewPageQuery(cursor, !disableCursorValidation, order, limit)
 
 	if err != nil {
 		if invalidFieldError, ok := err.(*db2.InvalidFieldError); ok {
