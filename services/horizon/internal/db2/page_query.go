@@ -30,17 +30,25 @@ const (
 var (
 	// ErrInvalidOrder is an error that occurs when a user-provided order string
 	// is invalid
-	ErrInvalidOrder = errors.New("Invalid order")
+	ErrInvalidOrder = &InvalidFieldError{"order"}
 	// ErrInvalidLimit is an error that occurs when a user-provided limit num
 	// is invalid
-	ErrInvalidLimit = errors.New("Invalid limit")
+	ErrInvalidLimit = &InvalidFieldError{"limit"}
 	// ErrInvalidCursor is an error that occurs when a user-provided cursor string
 	// is invalid
-	ErrInvalidCursor = errors.New("Invalid cursor")
+	ErrInvalidCursor = &InvalidFieldError{"cursor"}
 	// ErrNotPageable is an error that occurs when the records provided to
 	// PageQuery.GetContinuations cannot be cast to Pageable
 	ErrNotPageable = errors.New("Records provided are not Pageable")
 )
+
+type InvalidFieldError struct {
+	Name string
+}
+
+func (e *InvalidFieldError) Error() string {
+	return fmt.Sprintf("%s: invalid value", e.Name)
+}
 
 // ApplyTo returns a new SelectBuilder after applying the paging effects of
 // `p` to `sql`.  This method provides the default case for paging: int64
@@ -223,7 +231,13 @@ func NewPageQuery(
 		return
 	}
 
+	// Set cursor
 	result.Cursor = cursor
+	_, _, err = result.CursorInt64Pair(DefaultPairSep)
+	if err != nil {
+		err = ErrInvalidCursor
+		return
+	}
 
 	// Set limit
 	switch {
