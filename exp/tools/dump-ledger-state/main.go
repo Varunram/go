@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strconv"
 	"time"
 
 	"github.com/stellar/go/exp/ingest"
@@ -15,8 +16,6 @@ import (
 )
 
 func main() {
-	dsn := "postgres://localhost:5432/horizondemo?sslmode=disable"
-
 	archive, err := archive()
 	if err != nil {
 		panic(err)
@@ -24,24 +23,29 @@ func main() {
 
 	statePipeline := &pipeline.StatePipeline{}
 	statePipeline.SetRoot(
-		statePipeline.Node(&processors.RootProcessor{}).
+		pipeline.StateNode(&processors.RootProcessor{}).
 			Pipe(
-				statePipeline.Node(&processors.EntryTypeFilter{Type: xdr.LedgerEntryTypeAccount}).
-					Pipe(statePipeline.Node(&processors.CSVPrinter{Filename: "./accounts.csv"})),
-				statePipeline.Node(&processors.EntryTypeFilter{Type: xdr.LedgerEntryTypeData}).
-					Pipe(statePipeline.Node(&processors.CSVPrinter{Filename: "./accountdata.csv"})),
-				statePipeline.Node(&processors.EntryTypeFilter{Type: xdr.LedgerEntryTypeOffer}).
-					Pipe(statePipeline.Node(&processors.CSVPrinter{Filename: "./offers.csv"})),
-				statePipeline.Node(&processors.EntryTypeFilter{Type: xdr.LedgerEntryTypeTrustline}).
-					Pipe(statePipeline.Node(&processors.CSVPrinter{Filename: "./trustlines.csv"})),
+				pipeline.StateNode(&processors.EntryTypeFilter{Type: xdr.LedgerEntryTypeAccount}).
+					Pipe(pipeline.StateNode(&processors.CSVPrinter{Filename: "./accounts.csv"})),
+				pipeline.StateNode(&processors.EntryTypeFilter{Type: xdr.LedgerEntryTypeData}).
+					Pipe(pipeline.StateNode(&processors.CSVPrinter{Filename: "./accountdata.csv"})),
+				pipeline.StateNode(&processors.EntryTypeFilter{Type: xdr.LedgerEntryTypeOffer}).
+					Pipe(pipeline.StateNode(&processors.CSVPrinter{Filename: "./offers.csv"})),
+				pipeline.StateNode(&processors.EntryTypeFilter{Type: xdr.LedgerEntryTypeTrustline}).
+					Pipe(pipeline.StateNode(&processors.CSVPrinter{Filename: "./trustlines.csv"})),
 			),
 	)
 
+	ledgerSequence, err := strconv.Atoi(os.Getenv("LATEST_LEDGER"))
+	if err != nil {
+		panic(err)
+	}
+
 	session := &ingest.SingleLedgerSession{
-		LedgerSequence: 25154239,
+		LedgerSequence: uint32(ledgerSequence),
 		Archive:        archive,
 		StatePipeline:  statePipeline,
-		TempSet:        &io.PostgresTempSet{DSN: dsn},
+		TempSet:        &io.MemoryTempSet{},
 	}
 
 	doneStats := printPipelineStats(statePipeline)
@@ -63,16 +67,13 @@ func main() {
 	}
 	for _, file := range sortedFiles {
 		err := os.Remove(file)
-		if err != nil {
+		// Ignore not exist errors
+		if err != nil && !os.IsNotExist(err) {
 			panic(err)
 		}
 	}
 
-	time.Sleep(10 * time.Second)
 	doneStats <- true
-	time.Sleep(10 * time.Second)
-	// Print go routines count for the last time
-	fmt.Printf("Goroutines = %v\n", runtime.NumGoroutine())
 }
 
 func archive() (*historyarchive.Archive, error) {

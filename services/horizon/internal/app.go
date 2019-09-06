@@ -13,6 +13,7 @@ import (
 	"github.com/gomodule/redigo/redis"
 	metrics "github.com/rcrowley/go-metrics"
 	"github.com/stellar/go/clients/stellarcore"
+	"github.com/stellar/go/exp/orderbook"
 	horizonContext "github.com/stellar/go/services/horizon/internal/context"
 	"github.com/stellar/go/services/horizon/internal/db2/core"
 	"github.com/stellar/go/services/horizon/internal/db2/history"
@@ -23,14 +24,12 @@ import (
 	"github.com/stellar/go/services/horizon/internal/operationfeestats"
 	"github.com/stellar/go/services/horizon/internal/paths"
 	"github.com/stellar/go/services/horizon/internal/reap"
-	"github.com/stellar/go/services/horizon/internal/simplepath"
 	"github.com/stellar/go/services/horizon/internal/txsub"
 	"github.com/stellar/go/support/app"
 	"github.com/stellar/go/support/db"
 	"github.com/stellar/go/support/errors"
 	"github.com/stellar/go/support/log"
-	"github.com/throttled/throttled"
-	"golang.org/x/net/http2"
+	"github.com/stellar/throttled"
 	graceful "gopkg.in/tylerb/graceful.v1"
 )
 
@@ -98,8 +97,6 @@ func (a *App) Serve() {
 		},
 	}
 
-	http2.ConfigureServer(srv.Server, nil)
-
 	log.Infof("Starting horizon on %s (ingest: %v)", addr, a.config.Ingest)
 
 	go a.run()
@@ -116,7 +113,7 @@ func (a *App) Serve() {
 	}
 
 	if err != nil {
-		log.Panic(err)
+		log.Fatal(err)
 	}
 
 	a.CloseDB()
@@ -203,7 +200,7 @@ func (a *App) UpdateLedgerState() {
 		return
 	}
 
-	next.ExpHistoryLatest, err = a.HistoryQ().GetLastLedgerExpIngest()
+	next.ExpHistoryLatest, err = a.HistoryQ().GetLastLedgerExpIngestNonBlocking()
 	if err != nil {
 		logErr(err, "failed to load the oldest known exp ledger state from history DB")
 		return
@@ -400,14 +397,18 @@ func (a *App) init() {
 	// ingester
 	initIngester(a)
 
-	// expingester
-	initExpIngester(a)
+	var orderBookGraph *orderbook.OrderBookGraph
+	if a.config.EnableExperimentalIngestion {
+		orderBookGraph = orderbook.NewOrderBookGraph()
+		// expingester
+		initExpIngester(a, orderBookGraph)
+	}
 
 	// txsub
 	initSubmissionSystem(a)
 
 	// path-finder
-	a.paths = &simplepath.Finder{a.CoreQ()}
+	initPathFinder(a, orderBookGraph)
 
 	// reaper
 	a.reaper = reap.New(a.config.HistoryRetentionCount, a.HorizonSession(context.Background()))
@@ -424,7 +425,10 @@ func (a *App) init() {
 	a.web.mustInstallMiddlewares(a, a.config.ConnectionTimeout)
 
 	// web.actions
-	a.web.mustInstallActions(a.config.EnableAssetStats, a.config.EnableAccountsForSigner, a.config.FriendbotURL)
+	a.web.mustInstallActions(
+		a.config.EnableAssetStats,
+		a.config.FriendbotURL,
+	)
 
 	// metrics and log.metrics
 	a.metrics = metrics.NewRegistry()

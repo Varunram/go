@@ -9,10 +9,13 @@ import (
 	raven "github.com/getsentry/raven-go"
 	"github.com/gomodule/redigo/redis"
 	metrics "github.com/rcrowley/go-metrics"
+	ingestio "github.com/stellar/go/exp/ingest/io"
+	"github.com/stellar/go/exp/orderbook"
 	"github.com/stellar/go/services/horizon/internal/db2/core"
 	"github.com/stellar/go/services/horizon/internal/db2/history"
 	"github.com/stellar/go/services/horizon/internal/expingest"
 	"github.com/stellar/go/services/horizon/internal/ingest"
+	"github.com/stellar/go/services/horizon/internal/simplepath"
 	"github.com/stellar/go/services/horizon/internal/txsub"
 	results "github.com/stellar/go/services/horizon/internal/txsub/results/db"
 	"github.com/stellar/go/services/horizon/internal/txsub/sequence"
@@ -67,13 +70,13 @@ func initIngester(app *App) {
 	app.ingester.HistoryRetentionCount = app.config.HistoryRetentionCount
 }
 
-func initExpIngester(app *App) {
-	if !app.config.Ingest {
-		return
-	}
-
-	if !app.config.EnableAccountsForSigner {
-		return
+func initExpIngester(app *App, orderBookGraph *orderbook.OrderBookGraph) {
+	var tempSet ingestio.TempSet = &ingestio.MemoryTempSet{}
+	switch app.config.IngestStateReaderTempSet {
+	case "postgres":
+		tempSet = &ingestio.PostgresTempSet{
+			Session: app.HorizonSession(context.Background()),
+		}
 	}
 
 	var err error
@@ -85,9 +88,19 @@ func initExpIngester(app *App) {
 		// use multiple archives at the same time currently.
 		HistoryArchiveURL: app.config.HistoryArchiveURLs[0],
 		StellarCoreURL:    app.config.StellarCoreURL,
+		OrderBookGraph:    orderBookGraph,
+		TempSet:           tempSet,
 	})
 	if err != nil {
-		log.Panic(err)
+		log.Fatal(err)
+	}
+}
+
+func initPathFinder(app *App, orderBookGraph *orderbook.OrderBookGraph) {
+	if app.config.EnableExperimentalIngestion {
+		app.paths = simplepath.NewInMemoryFinder(orderBookGraph)
+	} else {
+		app.paths = &simplepath.Finder{app.CoreQ()}
 	}
 }
 
@@ -100,7 +113,7 @@ func initSentry(app *App) {
 	log.WithField("dsn", app.config.SentryDSN).Info("Initializing sentry")
 	err := raven.SetDSN(app.config.SentryDSN)
 	if err != nil {
-		log.Panic(err)
+		log.Fatal(err)
 	}
 }
 
@@ -181,8 +194,8 @@ func initRedis(app *App) {
 		IdleTimeout: 240 * time.Second,
 		Dial:        dialRedis(redisURL),
 		TestOnBorrow: func(c redis.Conn, t time.Time) error {
-			_, err := c.Do("PING")
-			return err
+			_, pingErr := c.Do("PING")
+			return pingErr
 		},
 	}
 
